@@ -2,17 +2,18 @@ package chromedpEngine
 
 import (
 	"context"
+	"math/rand"
+	"mtSecKill/logs"
+	"net/http"
+	"sync"
+	"time"
+
 	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
-	"github.com/zqijzqj/mtSecKill/logs"
-	"math/rand"
-	"net/http"
-	"sync"
-	"time"
 )
 
 var DefaultOptions = []chromedp.ExecAllocatorOption{
@@ -39,9 +40,10 @@ var DefaultOptions = []chromedp.ExecAllocatorOption{
 
 var globalCtx *GlobalBackgroundCtx = nil
 var mu sync.Mutex
+
 type GlobalBackgroundCtx struct {
 	background context.Context
-	Cancel context.CancelFunc
+	Cancel     context.CancelFunc
 }
 
 func GetGlobalCtx() context.Context {
@@ -50,7 +52,6 @@ func GetGlobalCtx() context.Context {
 	}
 	return globalCtx.background
 }
-
 
 func NewGlobalCtx() {
 
@@ -105,11 +106,11 @@ var UserAgent = []string{
 }
 
 func GetRandUserAgent() string {
-	RE:
+RE:
 	al := len(UserAgent)
 	if al > 1 {
 		rand.Seed(time.Now().UnixNano())
-		return  UserAgent[rand.Intn(al)]
+		return UserAgent[rand.Intn(al)]
 	}
 	goto RE
 }
@@ -126,13 +127,12 @@ func RequestByCookie(ctx context.Context, req *http.Request) (*http.Response, er
 	}
 	for _, c := range cookies {
 		req.AddCookie(&http.Cookie{
-			Name:       c.Name,
-			Value:      c.Value,
+			Name:  c.Name,
+			Value: c.Value,
 		})
 	}
 	return httpClient.Do(req)
 }
-
 
 func CreateOptions(opts ...chromedp.ExecAllocatorOption) []chromedp.ExecAllocatorOption {
 	options := append(chromedp.DefaultExecAllocatorOptions[:], DefaultOptions...)
@@ -161,7 +161,7 @@ func WaitDocumentUpdated(ctx context.Context) (<-chan struct{}, context.CancelFu
 		}
 		if isUpdated {
 			select {
-			case <- ctxNew.Done():
+			case <-ctxNew.Done():
 			case ch <- struct{}{}:
 			}
 			close(ch)

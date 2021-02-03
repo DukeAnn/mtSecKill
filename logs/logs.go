@@ -1,8 +1,9 @@
 package logs
 
 import (
-	"github.com/gookit/color"
 	"log"
+
+	"github.com/gookit/color"
 )
 
 //这个包用来统一的日志输出处理
