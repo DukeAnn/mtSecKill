@@ -27,31 +27,32 @@ import (
 )
 
 type jdSecKill struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	bCtx        context.Context
-	bWorksCtx   []context.Context
+	ctx         context.Context    // 浏览器上下文
+	cancel      context.CancelFunc // 浏览器取消
+	bCtx        context.Context    // 监听上下文
+	bWorksCtx   []context.Context  // 线程上线文
 	isLogin     bool
 	isClose     bool
 	mu          sync.Mutex
 	userAgent   string
-	UserInfo    gjson.Result
-	SkuId       string
-	SecKillUrl  string
-	SecKillNum  int
-	SecKillInfo gjson.Result
+	UserInfo    gjson.Result // 用户数据
+	SkuId       string       // 秒杀 SKU
+	SecKillUrl  string       // 秒杀地址
+	SecKillNum  int          // 秒杀数量
+	SecKillInfo gjson.Result // 秒杀数据
 	eid         string
 	fp          string
-	Works       int
-	IsOkChan    chan struct{}
-	IsOk        bool
-	StartTime   time.Time
-	DiffTime    int64
+	Workers     int           // 抢购进程数
+	IsOkChan    chan struct{} // 如果抢购成功将向此管道发送消息
+	IsOk        bool          // 如果抢购成功置为 true
+	StartTime   time.Time     // 抢购开始时间
+	DiffTime    int64         // 本地与JD服务的时间差
 }
 
-func NewJdSecKill(execPath string, skuId string, num, works int) *jdSecKill {
-	if works < 0 {
-		works = 1
+// execPath 浏览器路径，skuId 商品 SKU，secKillNum 秒杀数量，workers 进程数
+func NewJdSecKill(execPath string, skuId string, secKillNum, workers int) *jdSecKill {
+	if workers < 0 {
+		workers = 1
 	}
 	jsk := &jdSecKill{
 		ctx:        nil,
@@ -59,11 +60,12 @@ func NewJdSecKill(execPath string, skuId string, num, works int) *jdSecKill {
 		isClose:    false,
 		userAgent:  chromedpEngine.GetRandUserAgent(),
 		SkuId:      skuId,
-		SecKillNum: num,
-		Works:      works,
+		SecKillNum: secKillNum,
+		Workers:    workers,
 		IsOk:       false,
 		IsOkChan:   make(chan struct{}, 1),
 	}
+	// 启动浏览器
 	jsk.ctx, jsk.cancel = chromedpEngine.NewExecCtx(chromedp.ExecPath(execPath), chromedp.UserAgent(jsk.userAgent))
 	return jsk
 }
@@ -114,6 +116,7 @@ func (jsk *jdSecKill) GetReq(reqUrl string, params map[string]string, referer st
 	return r, nil
 }
 
+// 获取就JD服务器时间
 func (jsk *jdSecKill) SyncJdTime() {
 	resp, _ := http.Get("https://a.jd.com//ajax/queryServerData.html")
 	defer resp.Body.Close()
@@ -174,17 +177,19 @@ func FormatJdResponse(b []byte, prefix string, isConvertStr bool) gjson.Result {
 	return gjson.Parse(r)
 }
 
-//初始化监听请求数据
+//监听初始化请求数据的登录窗口，检查是否登陆，并且重登陆返回的信息中获取用户数据
 func (jsk *jdSecKill) InitActionFunc() chromedp.ActionFunc {
 	return func(ctx context.Context) error {
 		jsk.bCtx = ctx
 		_ = network.Enable().Do(ctx)
+		// 一旦 ctx 变化便会触发函数
 		chromedp.ListenTarget(ctx, func(ev interface{}) {
 			switch e := ev.(type) {
 			case *network.EventResponseReceived:
 				go func() {
 					if strings.Contains(e.Response.URL, "passport.jd.com/user/petName/getUserInfoForMiniJd.action") {
 						b, err := network.GetResponseBody(e.RequestID).Do(ctx)
+						logs.Println(string(b))
 						if err == nil {
 							jsk.UserInfo = FormatJdResponse(b, e.Response.URL, false)
 						}
@@ -223,6 +228,7 @@ func (jsk *jdSecKill) Run() error {
 		}),
 		jsk.GetEidAndFp(),
 		jsk.WaitStart(),
+		// 开始抢购
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			//提取抢购连接
 			for _, v := range jsk.bWorksCtx {
@@ -251,10 +257,11 @@ func (jsk *jdSecKill) Run() error {
 	})
 }
 
+// 创建抢购标签，阻塞到设定之间
 func (jsk *jdSecKill) WaitStart() chromedp.ActionFunc {
 	return func(ctx context.Context) error {
 		u := "https://item.jd.com/" + jsk.SkuId + ".html"
-		for i := 0; i < jsk.Works; i++ {
+		for i := 0; i < jsk.Workers; i++ {
 			go func() {
 				tid, err := target.CreateTarget(u).Do(ctx)
 				if err == nil {
@@ -293,6 +300,7 @@ func (jsk *jdSecKill) WaitStart() chromedp.ActionFunc {
 	}
 }
 
+// 随机将商品加入购物车获取 Eid 和 Fp
 func (jsk *jdSecKill) GetEidAndFp() chromedp.ActionFunc {
 	return func(ctx context.Context) error {
 	RE:
@@ -364,6 +372,7 @@ func (jsk *jdSecKill) FetchSecKillUrl() {
 	return
 }
 
+// 提交订单
 func (jsk *jdSecKill) ReqSubmitSecKillOrder(ctx context.Context) error {
 	if ctx == nil {
 		ctx = jsk.bCtx
@@ -494,6 +503,7 @@ func (jsk *jdSecKill) GetSecKillInitInfo(ctx context.Context) error {
 	return nil
 }
 
+// 获取秒杀连接
 func (jsk *jdSecKill) GetSecKillUrl() string {
 	req, _ := http.NewRequest("GET", "https://itemko.jd.com/itemShowBtn", nil)
 	req.Header.Add("User-Agent", jsk.userAgent)
